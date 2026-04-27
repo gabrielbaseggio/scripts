@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -e
+
+if [[ -z "$1" ]]; then
+  echo "Usage: tmux-session <session-name>" >&2
+  exit 1
+fi
+
+SESSION="$1"
+
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+  tmux attach-session -t "$SESSION"
+  exit 0
+fi
+
+TMUXINATOR_CONFIG="$HOME/.config/tmuxinator/$SESSION.yml"
+
+if [[ -f "$TMUXINATOR_CONFIG" ]]; then
+  tmuxinator start "$SESSION"
+else
+  tmux new-session -s "$SESSION"
+fi
