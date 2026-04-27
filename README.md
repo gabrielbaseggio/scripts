@@ -9,12 +9,13 @@ Attach to an existing tmux session or create a new one. If a tmuxinator config e
 ### Usage
 
 ```bash
-tmux-session [--dir <directory>] [--config <config-name>]
+tmux-session [--dir <directory>] [--name <session-name>] [--config <config-name>]
 ```
 
 | Flag | Description |
 |---|---|
-| `--dir`, `-d` | Working directory. The session name is derived from its basename. Defaults to `$PWD`. |
+| `--dir`, `-d` | Working directory passed to tmuxinator. Defaults to `$PWD`. |
+| `--name`, `-n` | Session name. Defaults to the basename of `$PWD`. |
 | `--config`, `-c` | Tmuxinator config name to use (filename without `.yml`). Defaults to the session name. |
 
 ### Examples
@@ -30,13 +31,13 @@ cd ~/Work/Projects/printing_office-qb-payments
 tmux-session --config printing-office
 # → session: "printing_office-qb-payments", config: ~/.config/tmuxinator/printing-office.yml
 
-# Explicit directory from anywhere
-tmux-session --dir ~/Work/Projects/printing_office --config printing-office
+# Explicit session name
+tmux-session --name my-session --config printing-office
 ```
 
 ### How it works
 
-1. Derives the **session name** from `basename` of the working directory.
+1. Derives the **session name** from `--name` if provided, otherwise from `basename "$PWD"`.
 2. Checks if a tmux session with that name already exists — if so, attaches to it.
 3. Looks for `~/.config/tmuxinator/<config>.yml`.
    - Found → `tmuxinator start <config> --name=<session> -- <dir>`
