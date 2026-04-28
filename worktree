@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -e
+
+MODE=""
+SEED=false
+DUMP=false
+CLEAN=false
+
+usage() {
+  echo "Usage: worktree --start [--seed] | --stop [--dump|--clean]" >&2
+  exit 1
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --start) MODE="start" ;;
+    --stop)  MODE="stop"  ;;
+    --seed)  SEED=true    ;;
+    --dump)  DUMP=true    ;;
+    --clean) CLEAN=true   ;;
+    *) usage ;;
+  esac
+  shift
+done
+
+[[ -z "$MODE" ]] && usage
+[[ "$MODE" == "start" && "$DUMP"  == true ]] && { echo "Error: --dump is only valid with --stop" >&2; exit 1; }
+[[ "$MODE" == "start" && "$CLEAN" == true ]] && { echo "Error: --clean is only valid with --stop" >&2; exit 1; }
+[[ "$MODE" == "stop"  && "$SEED"  == true ]] && { echo "Error: --seed is only valid with --start" >&2; exit 1; }
+[[ "$DUMP" == true    && "$CLEAN" == true ]] && { echo "Error: --dump and --clean are mutually exclusive" >&2; exit 1; }
+
+# Derive unique host ports from the worktree directory name
+HASH="$(echo -n "$(basename "$PWD")" | cksum | awk '{print $1}')"
+APP_PORT=$(( 4000 + (HASH % 1000) ))
+DB_PORT=$(( 6000 + (HASH % 1000) ))
+
+# Detect whether this project has a db service
+HAS_DB=false
+if docker compose config --services 2>/dev/null | grep -q "^db$"; then
+  HAS_DB=true
+fi
+
+POSTGRES_USER="${POSTGRES_USER:-postgres}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-password}"
+MAIN_DB_PORT="${MAIN_DB_PORT:-5432}"
+
+if [[ "$HAS_DB" == true && -z "$POSTGRES_DB" ]]; then
+  POSTGRES_DB="$(docker compose config 2>/dev/null | grep 'POSTGRES_DB' | head -1 | awk '{print $2}')"
+  if [[ -z "$POSTGRES_DB" ]]; then
+    echo "Error: could not determine POSTGRES_DB. Set it in .env or the environment." >&2
+    exit 1
+  fi
+fi
+
+update_env_var() {
+  local key="$1" value="$2"
+  touch .env
+  if grep -q "^${key}=" .env; then
+    sed -i "s/^${key}=.*/${key}=${value}/" .env
+  else
+    echo "${key}=${value}" >> .env
+  fi
+}
+
+wait_for_db() {
+  echo "Waiting for database on port ${DB_PORT}..."
+  local attempts=0
+  until PGPASSWORD="$POSTGRES_PASSWORD" pg_isready -h localhost -p "$DB_PORT" -U "$POSTGRES_USER" -q; do
+    attempts=$(( attempts + 1 ))
+    [[ $attempts -ge 30 ]] && { echo "Database did not become ready" >&2; exit 1; }
+    sleep 2
+  done
+}
+
+if [[ "$MODE" == "start" ]]; then
+  update_env_var "APP_PORT" "$APP_PORT"
+  [[ "$HAS_DB" == true ]] && update_env_var "DB_PORT" "$DB_PORT"
+
+  if [[ "$SEED" == true && "$HAS_DB" == true ]]; then
+    docker compose up -d db
+    wait_for_db
+    echo "Seeding from main database (port ${MAIN_DB_PORT})..."
+    PGPASSWORD="$POSTGRES_PASSWORD" pg_dump \
+      --clean --if-exists \
+      -h localhost -p "$MAIN_DB_PORT" -U "$POSTGRES_USER" "$POSTGRES_DB" | \
+    PGPASSWORD="$POSTGRES_PASSWORD" psql \
+      -h localhost -p "$DB_PORT" -U "$POSTGRES_USER" "$POSTGRES_DB"
+    echo "Seed complete."
+    docker compose up -d web
+  else
+    docker compose up -d
+  fi
+fi
+
+if [[ "$MODE" == "stop" ]]; then
+  if [[ "$DUMP" == true && "$HAS_DB" == true ]]; then
+    DUMP_FILE="dump_$(date +%Y%m%d_%H%M%S).sql"
+    echo "Dumping database to ${DUMP_FILE}..."
+    PGPASSWORD="$POSTGRES_PASSWORD" pg_dump \
+      -h localhost -p "$DB_PORT" -U "$POSTGRES_USER" "$POSTGRES_DB" > "$DUMP_FILE"
+    echo "Dump saved to ${DUMP_FILE}."
+  fi
+
+  if [[ "$CLEAN" == true ]]; then
+    docker compose down -v
+  else
+    docker compose down
+  fi
+fi

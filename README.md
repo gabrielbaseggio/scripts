@@ -58,3 +58,69 @@ ln -s ~/tmuxinator-configs/printing-office/printing-office.yml ~/.config/tmuxina
 ln -s ~/scripts/tmux-session /usr/local/bin/tmux-session
 chmod +x ~/scripts/tmux-session
 ```
+
+---
+
+## worktree
+
+Manage Docker Compose services for a git worktree with isolated ports and database. Run from the worktree directory. Ports are derived deterministically from the directory name so worktrees never conflict with each other or with the main branch.
+
+Requires `APP_PORT` and `DB_PORT` (projects with a db service) to be read from `.env` in the docker-compose files.
+
+### Usage
+
+```bash
+worktree --start [--seed]
+worktree --stop  [--dump|--clean]
+```
+
+| Flag | Description |
+|---|---|
+| `--start` | Write ports to `.env`, then `docker compose up -d`. |
+| `--start --seed` | Start only the `db` service, restore a dump from the main DB, then start `web`. |
+| `--stop` | `docker compose down` (keeps volumes). |
+| `--stop --dump` | Dump the worktree DB to a `.sql` file, then stop. |
+| `--stop --clean` | `docker compose down -v` (destroys volumes). |
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `POSTGRES_USER` | `postgres` | PostgreSQL user. |
+| `POSTGRES_PASSWORD` | `password` | PostgreSQL password. |
+| `POSTGRES_DB` | read from compose config | Database name. |
+| `MAIN_DB_PORT` | `5432` | Host port of the main branch DB, used by `--seed`. |
+
+### Examples
+
+```bash
+# Start a fresh worktree
+cd ~/Work/Projects/my-app-feature-x
+worktree --start
+
+# Start with a copy of the main branch data
+worktree --start --seed
+
+# Done — keep containers down but preserve the DB volume
+worktree --stop
+
+# Done — save a DB snapshot before tearing down
+worktree --stop --dump
+
+# Done — destroy everything
+worktree --stop --clean
+```
+
+### How it works
+
+1. Hashes the worktree directory name to derive unique `APP_PORT` (4000–4999) and `DB_PORT` (6000–6999).
+2. Writes those ports to `.env` (creates the file if it doesn't exist).
+3. Docker Compose reads them via `${APP_PORT:-<default>}` in the compose file, so host ports never clash.
+4. Named volumes are scoped to the Compose project name (the directory name by default), so each worktree's DB data is automatically isolated.
+
+### Setup
+
+```bash
+ln -s ~/scripts/worktree /usr/local/bin/worktree
+chmod +x ~/scripts/worktree
+```
